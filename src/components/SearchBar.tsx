@@ -1,145 +1,361 @@
 import React, { useState } from "react";
 import axios from "axios";
-import type { Route, DirectionsResponse } from "../types/ors";
+import polyline from "polyline";
+import type { Route, Step, Segment } from "../types/ors";
 
-interface GeocodeResponse {
-  features: Array<{
-    geometry: {
-      coordinates: [number, number];
-    };
-  }>;
+interface GraphHopperInstruction {
+  text: string;
+  distance?: number;
+  time?: number;
+}
+
+interface GraphHopperPath {
+  instructions: GraphHopperInstruction[];
+  points: string;
+  distance: number;
+  time: number;
+}
+
+interface GraphHopperDirectionsResponse {
+  paths: GraphHopperPath[];
+}
+
+interface GraphHopperGeocodeHit {
+  point: {
+    lat: number;
+    lng: number;
+  };
+  name?: string;
+}
+
+interface GraphHopperGeocodeResponse {
+  hits: GraphHopperGeocodeHit[];
+}
+
+// Error response interfaces
+interface ApiErrorResponse {
+  error?: string;
+  message?: string;
+  details?: string;
 }
 
 interface SearchBarProps {
-  setRoute: (route: Route) => void;
+  setRoute: (route: Route | null) => void;
+  mode?: "car" | "foot" | "bike";
+  origin?: [number, number];
+  rerouteOnOriginChange?: boolean;
+  onPlannedCoordinates?: (coords: [number, number][]) => void;
 }
 
-const SearchBar: React.FC<SearchBarProps> = ({ setRoute }) => {
-  const [origin] = useState("9.03,38.7578"); // Addis Ababa
+// Custom error type
+class DirectionsError extends Error {
+  public userMessage: string;
+
+  constructor(message: string, userMessage?: string) {
+    super(message);
+    this.name = "DirectionsError";
+    this.userMessage = userMessage || message;
+  }
+}
+
+const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = [9.03, 38.7578], rerouteOnOriginChange = false, onPlannedCoordinates }) => {
   const [destination, setDestination] = useState("");
+  const [waypoints, setWaypoints] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [avoidToll, setAvoidToll] = useState(false);
+  const [avoidFerry, setAvoidFerry] = useState(false);
+  const [avoidMotorway, setAvoidMotorway] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const doSearch = async () => {
     setError(null);
+    setRoute(null);
 
     if (!destination.trim()) {
       setError("Please enter a destination");
-      return;
-    }
-    if (!origin.match(/^-?\d+\.\d+,-?\d+\.\d+$/)) {
-      setError("Invalid origin format. Use 'lat,lng'");
       return;
     }
 
     setLoading(true);
 
     try {
-      // Geocode via backend proxy (no api_key in frontend)
-      const geoRes = await axios.get<GeocodeResponse>(
-        `/api/geocode?text=${destination.trim()}&size=1`
+      // 1. Geocode destination
+      const geoRes = await axios.get<GraphHopperGeocodeResponse>(
+        `/api/geocode?text=${encodeURIComponent(destination)}&size=1`
       );
 
-      const destCoords = geoRes.data.features?.[0]?.geometry?.coordinates;
-      if (!destCoords) {
-        setError("Destination not found");
-        setLoading(false);
-        return;
+      const destinationHit = geoRes.data.hits?.[0];
+      if (!destinationHit) {
+        throw new DirectionsError(
+          "Destination not found",
+          "The destination address could not be found. Please try a different location."
+        );
       }
 
-      const originCoords = origin.split(",").map(Number) as [number, number];
-      if (originCoords.some(isNaN)) {
-        setError("Invalid origin coordinates");
-        setLoading(false);
-        return;
-      }
-
-      const coords: [number, number][] = [
-        [originCoords[1], originCoords[0]], // [lng, lat]
-        [destCoords[0], destCoords[1]], // [lng, lat]
+      const destCoords: [number, number] = [
+        destinationHit.point.lat,
+        destinationHit.point.lng,
       ];
 
-      // Directions via backend proxy (no Authorization header in frontend)
-      const routeRes = await axios.post<DirectionsResponse>(
-        "/api/directions",
-        { coordinates: coords },
-        {
-          headers: {
-            "Content-Type": "application/json",
-          },
+      // 2. Geocode waypoints in order
+      const waypointCoords: [number, number][] = [];
+      for (const w of waypoints) {
+        const trimmed = w.trim();
+        if (!trimmed) continue;
+        const wRes = await axios.get<GraphHopperGeocodeResponse>(
+          `/api/geocode?text=${encodeURIComponent(trimmed)}&size=1`
+        );
+        const wHit = wRes.data.hits?.[0];
+        if (wHit) waypointCoords.push([wHit.point.lat, wHit.point.lng]);
+      }
+
+      // 3. Prepare coordinates for directions
+      const coordinates: [number, number][] = [origin, ...waypointCoords, destCoords];
+      onPlannedCoordinates?.(coordinates);
+
+      // 3. Fetch directions
+      const avoidOptions: string[] = [];
+      if (avoidToll) avoidOptions.push("toll");
+      if (avoidFerry) avoidOptions.push("ferry");
+      if (avoidMotorway) avoidOptions.push("motorway");
+
+      const dirRes = await axios.post<GraphHopperDirectionsResponse>("/api/directions", {
+        coordinates: coordinates,
+        mode,
+        ...(avoidOptions.length > 0 ? { avoid: avoidOptions } : {}),
+      });
+
+      const path = dirRes.data.paths?.[0];
+      if (!path) {
+        throw new DirectionsError(
+          "No route path found",
+          "No route could be calculated for the given locations."
+        );
+      }
+
+      // 4. Decode polyline and convert to [lng, lat] tuples (GeoJSON convention)
+      const decodedArray: number[][] = polyline.decode(path.points);
+
+      // Convert number[][] ([lat, lng]) to [lng, lat]
+      const geometryCoordinates: [number, number][] = decodedArray.map(
+        (coord): [number, number] => {
+          if (coord.length >= 2) {
+            return [coord[1], coord[0]];
+          }
+          throw new DirectionsError(
+            `Invalid coordinate: ${coord}`,
+            "Route data is invalid."
+          );
         }
       );
 
-      if (routeRes.data.routes.length === 0) {
-        setError("No route found");
+      // 5. Map instructions to steps
+      const steps: Step[] =
+        path.instructions?.map((instruction) => ({
+          instruction: instruction.text,
+          distance: instruction.distance,
+          duration: instruction.time,
+        })) || [];
+
+      // 6. Create segments
+      const segments: Segment[] = [
+        {
+          steps: steps,
+          distance: path.distance,
+          duration: path.time,
+        },
+      ];
+
+      // 7. Create complete route object
+      const route: Route = {
+        segments: segments,
+        geometry: {
+          coordinates: geometryCoordinates,
+          type: "LineString",
+        },
+        distance: path.distance,
+        duration: path.time,
+      };
+
+      setRoute(route);
+    } catch (err: unknown) {
+      // Proper error handling without 'any'
+      let errorMessage: string;
+
+      if (axios.isAxiosError(err)) {
+        // Axios error (HTTP error)
+        const apiError = err.response?.data as ApiErrorResponse;
+        errorMessage =
+          apiError?.error ||
+          apiError?.message ||
+          err.message ||
+          "Network error occurred";
+      } else if (err instanceof DirectionsError) {
+        // Our custom error
+        errorMessage = err.userMessage;
+      } else if (err instanceof Error) {
+        // Standard JavaScript Error
+        errorMessage = err.message;
       } else {
-        setRoute(routeRes.data.routes[0]);
+        // Unknown error type
+        errorMessage = "An unexpected error occurred";
       }
-    } catch (err) {
-      console.error("Fetch error:", err);
-      setError("Failed to fetch route. Please try again.");
+
+      setError(errorMessage);
+      console.error("Search error:", err);
     } finally {
       setLoading(false);
     }
   };
 
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await doSearch();
+  };
+
+  // Optional: reroute when origin changes
+  React.useEffect(() => {
+    if (!rerouteOnOriginChange) return;
+    if (!destination.trim()) return;
+    doSearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [origin?.[0], origin?.[1]]);
+
   return (
-    <form
-      onSubmit={handleSearch}
-      className="flex w-full max-w-lg bg-white rounded-lg shadow-md overflow-hidden"
-    >
-      <div className="flex-1 relative">
+    <div className="search-bar">
+      <form onSubmit={handleSearch} className="flex flex-col gap-3 mb-4">
         <input
           type="text"
+          placeholder="Enter destination address"
           value={destination}
           onChange={(e) => setDestination(e.target.value)}
-          placeholder="Enter destination (e.g., Bole, Addis Ababa)"
-          className="w-full px-4 py-2 outline-none disabled:bg-gray-100"
           disabled={loading}
+          className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
-        {error && (
-          <p className="absolute left-4 top-full mt-1 text-sm text-red-600">
-            {error}
-          </p>
-        )}
-      </div>
-      <button
-        type="submit"
-        className={`px-4 font-semibold text-white ${
-          loading
-            ? "bg-gray-400 cursor-not-allowed"
-            : "bg-blue-600 hover:bg-blue-700"
-        }`}
-        disabled={loading}
-      >
-        {loading ? (
-          <span className="flex items-center">
-            <svg
-              className="animate-spin h-5 w-5 mr-2 text-white"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8v8h8a8 8 0 01-8 8 8 8 0 01-8-8z"
-              />
-            </svg>
-            Loading...
-          </span>
-        ) : (
-          "Go"
-        )}
-      </button>
-    </form>
+        {waypoints.map((w, idx) => (
+          <div
+            key={idx}
+            className="flex items-center gap-2"
+            draggable
+            onDragStart={() => setDragIndex(idx)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={() => {
+              if (dragIndex === null || dragIndex === idx) return;
+              const next = [...waypoints];
+              const [moved] = next.splice(dragIndex, 1);
+              next.splice(idx, 0, moved);
+              setWaypoints(next);
+              setDragIndex(null);
+            }}
+          >
+            <input
+              type="text"
+              placeholder={`Waypoint ${idx + 1}`}
+              value={w}
+              onChange={(e) => {
+                const next = [...waypoints];
+                next[idx] = e.target.value;
+                setWaypoints(next);
+              }}
+              disabled={loading}
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="px-2 py-1 border rounded"
+                onClick={() => {
+                  if (idx === 0) return;
+                  const next = [...waypoints];
+                  [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                  setWaypoints(next);
+                }}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                className="px-2 py-1 border rounded"
+                onClick={() => {
+                  if (idx === waypoints.length - 1) return;
+                  const next = [...waypoints];
+                  [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]];
+                  setWaypoints(next);
+                }}
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                className="px-2 py-1 border rounded"
+                onClick={() => setWaypoints(waypoints.filter((_, i) => i !== idx))}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        ))}
+        <div>
+          <button
+            type="button"
+            className="px-3 py-1.5 border rounded"
+            onClick={() => setWaypoints((prev) => [...prev, ""]) }
+          >
+            Add waypoint
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          <span className="text-gray-700 font-medium">Avoid:</span>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={avoidToll}
+              onChange={(e) => setAvoidToll(e.target.checked)}
+              disabled={loading}
+            />
+            Tolls
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={avoidFerry}
+              onChange={(e) => setAvoidFerry(e.target.checked)}
+              disabled={loading}
+            />
+            Ferries
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={avoidMotorway}
+              onChange={(e) => setAvoidMotorway(e.target.checked)}
+              disabled={loading}
+            />
+            Motorways
+          </label>
+        </div>
+        <div>
+          <button
+            type="submit"
+            disabled={loading || !destination.trim()}
+            className={`px-6 py-2 text-white rounded-md font-medium ${
+              loading || !destination.trim()
+                ? "bg-gray-400 cursor-not-allowed"
+                : "bg-blue-600 hover:bg-blue-700"
+            }`}
+          >
+            {loading ? "Searching..." : "Get Directions"}
+          </button>
+        </div>
+      </form>
+
+      {error && (
+        <div className="text-red-600 bg-red-50 px-3 py-2 rounded-md">
+          Error: {error}
+        </div>
+      )}
+    </div>
   );
 };
 

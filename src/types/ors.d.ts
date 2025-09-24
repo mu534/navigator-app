@@ -1,19 +1,23 @@
 export interface Step {
   instruction: string;
+  distance?: number;
+  duration?: number;
 }
 
 export interface Segment {
   steps: Step[];
+  distance: number;
+  duration: number;
+}
+
+export interface Geometry {
+  coordinates: [number, number][];
+  type: "LineString";
 }
 
 export interface Route {
   segments: Segment[];
-  geometry: {
-    coordinates: [number, number][];
-    type: string;
-  };
-}
-
-export interface DirectionsResponse {
-  routes: Route[];
+  geometry: Geometry;
+  distance: number;
+  duration: number;
 }
