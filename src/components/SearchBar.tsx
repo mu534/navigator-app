@@ -58,7 +58,13 @@ class DirectionsError extends Error {
   }
 }
 
-const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = [9.03, 38.7578], rerouteOnOriginChange = false, onPlannedCoordinates }) => {
+const SearchBar: React.FC<SearchBarProps> = ({
+  setRoute,
+  mode = "car",
+  origin = [9.03, 38.7578],
+  rerouteOnOriginChange = false,
+  onPlannedCoordinates,
+}) => {
   const [destination, setDestination] = useState("");
   const [waypoints, setWaypoints] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -98,7 +104,7 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
         destinationHit.point.lng,
       ];
 
-      // 2. Geocode waypoints in order
+      // 2. Geocode waypoints
       const waypointCoords: [number, number][] = [];
       for (const w of waypoints) {
         const trimmed = w.trim();
@@ -111,20 +117,27 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
       }
 
       // 3. Prepare coordinates for directions
-      const coordinates: [number, number][] = [origin, ...waypointCoords, destCoords];
+      const coordinates: [number, number][] = [
+        origin,
+        ...waypointCoords,
+        destCoords,
+      ];
       onPlannedCoordinates?.(coordinates);
 
-      // 3. Fetch directions
+      // 4. Fetch directions
       const avoidOptions: string[] = [];
       if (avoidToll) avoidOptions.push("toll");
       if (avoidFerry) avoidOptions.push("ferry");
       if (avoidMotorway) avoidOptions.push("motorway");
 
-      const dirRes = await axios.post<GraphHopperDirectionsResponse>("/api/directions", {
-        coordinates: coordinates,
-        mode,
-        ...(avoidOptions.length > 0 ? { avoid: avoidOptions } : {}),
-      });
+      const dirRes = await axios.post<GraphHopperDirectionsResponse>(
+        "/api/directions",
+        {
+          coordinates,
+          mode,
+          ...(avoidOptions.length > 0 ? { avoid: avoidOptions } : {}),
+        }
+      );
 
       const path = dirRes.data.paths?.[0];
       if (!path) {
@@ -134,42 +147,46 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
         );
       }
 
-      // 4. Decode polyline and convert to [lng, lat] tuples (GeoJSON convention)
+      // 5. Decode polyline to [lng, lat]
       const decodedArray: number[][] = polyline.decode(path.points);
-
-      // Convert number[][] ([lat, lng]) to [lng, lat]
       const geometryCoordinates: [number, number][] = decodedArray.map(
-        (coord): [number, number] => {
-          if (coord.length >= 2) {
-            return [coord[1], coord[0]];
-          }
-          throw new DirectionsError(
-            `Invalid coordinate: ${coord}`,
-            "Route data is invalid."
-          );
-        }
+        (coord) => [coord[1], coord[0]]
       );
 
-      // 5. Map instructions to steps
+      // 6. Map instructions to Step[] with way_points
+      let pointIndex = 0; // to assign polyline indices
       const steps: Step[] =
-        path.instructions?.map((instruction) => ({
-          instruction: instruction.text,
-          distance: instruction.distance,
-          duration: instruction.time,
-        })) || [];
+        path.instructions?.map((instruction) => {
+          const wpCount = Math.max(
+            Math.round((instruction.distance || 0) / 10),
+            1
+          ); // simple estimate
+          const way_points = Array.from(
+            { length: wpCount },
+            (_, i) => pointIndex + i
+          );
+          pointIndex += wpCount;
 
-      // 6. Create segments
+          return {
+            instruction: instruction.text,
+            distance: instruction.distance,
+            duration: instruction.time,
+            way_points,
+          };
+        }) || [];
+
+      // 7. Create segment
       const segments: Segment[] = [
         {
-          steps: steps,
+          steps,
           distance: path.distance,
           duration: path.time,
         },
       ];
 
-      // 7. Create complete route object
+      // 8. Create route object
       const route: Route = {
-        segments: segments,
+        segments,
         geometry: {
           coordinates: geometryCoordinates,
           type: "LineString",
@@ -180,11 +197,9 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
 
       setRoute(route);
     } catch (err: unknown) {
-      // Proper error handling without 'any'
       let errorMessage: string;
 
       if (axios.isAxiosError(err)) {
-        // Axios error (HTTP error)
         const apiError = err.response?.data as ApiErrorResponse;
         errorMessage =
           apiError?.error ||
@@ -192,13 +207,10 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
           err.message ||
           "Network error occurred";
       } else if (err instanceof DirectionsError) {
-        // Our custom error
         errorMessage = err.userMessage;
       } else if (err instanceof Error) {
-        // Standard JavaScript Error
         errorMessage = err.message;
       } else {
-        // Unknown error type
         errorMessage = "An unexpected error occurred";
       }
 
@@ -231,12 +243,12 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
           value={destination}
           onChange={(e) => setDestination(e.target.value)}
           disabled={loading}
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         {waypoints.map((w, idx) => (
           <div
             key={idx}
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 text-white"
             draggable
             onDragStart={() => setDragIndex(idx)}
             onDragOver={(e) => e.preventDefault()}
@@ -264,7 +276,7 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                className="px-2 py-1 border rounded"
+                className="px-2 py-1 border rounded text-gray-50"
                 onClick={() => {
                   if (idx === 0) return;
                   const next = [...waypoints];
@@ -276,7 +288,7 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
               </button>
               <button
                 type="button"
-                className="px-2 py-1 border rounded"
+                className="px-2 py-1 border rounded text-gray-50"
                 onClick={() => {
                   if (idx === waypoints.length - 1) return;
                   const next = [...waypoints];
@@ -288,8 +300,10 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
               </button>
               <button
                 type="button"
-                className="px-2 py-1 border rounded"
-                onClick={() => setWaypoints(waypoints.filter((_, i) => i !== idx))}
+                className="px-2 py-1 border rounded text-gray-50"
+                onClick={() =>
+                  setWaypoints(waypoints.filter((_, i) => i !== idx))
+                }
               >
                 ✕
               </button>
@@ -299,15 +313,15 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
         <div>
           <button
             type="button"
-            className="px-3 py-1.5 border rounded"
-            onClick={() => setWaypoints((prev) => [...prev, ""]) }
+            className="px-3 py-1.5 border rounded text-gray-50 hover:bg-blue-700"
+            onClick={() => setWaypoints((prev) => [...prev, ""])}
           >
             Add waypoint
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-4 text-sm">
-          <span className="text-gray-700 font-medium">Avoid:</span>
-          <label className="flex items-center gap-2">
+          <span className="text-white font-medium">Avoid:</span>
+          <label className="flex items-center gap-2 text-gray-100">
             <input
               type="checkbox"
               checked={avoidToll}
@@ -316,7 +330,7 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
             />
             Tolls
           </label>
-          <label className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-gray-100">
             <input
               type="checkbox"
               checked={avoidFerry}
@@ -325,7 +339,7 @@ const SearchBar: React.FC<SearchBarProps> = ({ setRoute, mode = "car", origin = 
             />
             Ferries
           </label>
-          <label className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-gray-100">
             <input
               type="checkbox"
               checked={avoidMotorway}

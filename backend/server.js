@@ -1,4 +1,3 @@
-
 import express from "express";
 import axios from "axios";
 import dotenv from "dotenv";
@@ -40,7 +39,10 @@ const requestCounts = new Map();
 const RATE_LIMIT = Number(process.env.RATE_LIMIT || 60);
 const WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
 app.use((req, res, next) => {
-  const ip = req.headers["x-forwarded-for"]?.toString().split(",")[0] || req.socket.remoteAddress || "unknown";
+  const ip =
+    req.headers["x-forwarded-for"]?.toString().split(",")[0] ||
+    req.socket.remoteAddress ||
+    "unknown";
   const now = Date.now();
   const info = requestCounts.get(ip) || { count: 0, windowStart: now };
   if (now - info.windowStart > WINDOW_MS) {
@@ -62,15 +64,27 @@ app.get("/api/nearby", async (req, res) => {
     if (!lat || !lng) return res.status(400).json({ error: "Missing lat/lng" });
 
     // Map simple type chips to Overpass amenity/shop/highway tags
-    const typeList = (typeof types === "string" ? String(types).split(",") : Array.isArray(types) ? types : [])
+    const typeList = (
+      typeof types === "string"
+        ? String(types).split(",")
+        : Array.isArray(types)
+        ? types
+        : []
+    )
       .map((t) => String(t).trim().toLowerCase())
       .filter(Boolean);
 
-    const tagSets = typeList.length > 0 ? typeList : ["restaurant", "cafe", "atm", "fuel", "hotel", "hospital"];
+    const tagSets =
+      typeList.length > 0
+        ? typeList
+        : ["restaurant", "cafe", "atm", "fuel", "hotel", "hospital"];
 
     const around = `around:${radius},${lat},${lng}`;
     const filters = tagSets
-      .map((tag) => `node[amenity=${tag}](${around});way[amenity=${tag}](${around});node[shop=${tag}](${around});`)
+      .map(
+        (tag) =>
+          `node[amenity=${tag}](${around});way[amenity=${tag}](${around});node[shop=${tag}](${around});`
+      )
       .join("\n");
 
     const query = `
@@ -81,10 +95,14 @@ app.get("/api/nearby", async (req, res) => {
       out center 30;
     `;
 
-    const { data } = await axios.post("https://overpass-api.de/api/interpreter", query, {
-      headers: { "Content-Type": "text/plain" },
-      timeout: 15000,
-    });
+    const { data } = await axios.post(
+      "https://overpass-api.de/api/interpreter",
+      query,
+      {
+        headers: { "Content-Type": "text/plain" },
+        timeout: 15000,
+      }
+    );
 
     res.json(data);
   } catch (err) {
@@ -98,12 +116,25 @@ app.post("/api/nearby-along", async (req, res) => {
   try {
     const { coordinates, radius = 300, types } = req.body || {};
     if (!Array.isArray(coordinates) || coordinates.length < 2) {
-      return res.status(400).json({ error: "coordinates must be an array of [lat,lng] with length >= 2" });
+      return res
+        .status(400)
+        .json({
+          error: "coordinates must be an array of [lat,lng] with length >= 2",
+        });
     }
-    const typeList = (Array.isArray(types) ? types : typeof types === "string" ? String(types).split(",") : [])
+    const typeList = (
+      Array.isArray(types)
+        ? types
+        : typeof types === "string"
+        ? String(types).split(",")
+        : []
+    )
       .map((t) => String(t).trim().toLowerCase())
       .filter(Boolean);
-    const tagSets = typeList.length > 0 ? typeList : ["restaurant", "cafe", "atm", "fuel", "hotel", "hospital"];
+    const tagSets =
+      typeList.length > 0
+        ? typeList
+        : ["restaurant", "cafe", "atm", "fuel", "hotel", "hospital"];
 
     // Sample up to 15 points evenly along the polyline
     const samples = [];
@@ -118,7 +149,16 @@ app.post("/api/nearby-along", async (req, res) => {
     const aroundBlocks = samples
       .map((p) =>
         tagSets
-          .map((tag) => `node[amenity=${tag}](${around(p.lat, p.lng)});way[amenity=${tag}](${around(p.lat, p.lng)});node[shop=${tag}](${around(p.lat, p.lng)});`)
+          .map(
+            (tag) =>
+              `node[amenity=${tag}](${around(
+                p.lat,
+                p.lng
+              )});way[amenity=${tag}](${around(
+                p.lat,
+                p.lng
+              )});node[shop=${tag}](${around(p.lat, p.lng)});`
+          )
           .join("\n")
       )
       .join("\n");
@@ -131,10 +171,14 @@ app.post("/api/nearby-along", async (req, res) => {
       out center 50;
     `;
 
-    const { data } = await axios.post("https://overpass-api.de/api/interpreter", query, {
-      headers: { "Content-Type": "text/plain" },
-      timeout: 20000,
-    });
+    const { data } = await axios.post(
+      "https://overpass-api.de/api/interpreter",
+      query,
+      {
+        headers: { "Content-Type": "text/plain" },
+        timeout: 20000,
+      }
+    );
     res.json(data);
   } catch (err) {
     console.error("Nearby-along error:", err.response?.data || err.message);
@@ -166,8 +210,7 @@ app.post("/api/directions", async (req, res) => {
         ...(avoid
           ? {
               // allow values like ["toll","ferry","motorway"] or comma string
-              avoid:
-                Array.isArray(avoid) ? avoid.join(",") : String(avoid),
+              avoid: Array.isArray(avoid) ? avoid.join(",") : String(avoid),
             }
           : {}),
       },
@@ -176,7 +219,12 @@ app.post("/api/directions", async (req, res) => {
         return Object.entries(params)
           .map(([k, v]) =>
             Array.isArray(v)
-              ? v.map((val) => `${encodeURIComponent(k)}=${encodeURIComponent(val)}`).join("&")
+              ? v
+                  .map(
+                    (val) =>
+                      `${encodeURIComponent(k)}=${encodeURIComponent(val)}`
+                  )
+                  .join("&")
               : `${encodeURIComponent(k)}=${encodeURIComponent(v)}`
           )
           .join("&");
@@ -189,7 +237,9 @@ app.post("/api/directions", async (req, res) => {
     res.json(response.data);
   } catch (err) {
     console.error("Directions error:", err.response?.data || err.message);
-    res.status(500).json({ error: err.response?.data?.message || "Directions failed" });
+    res
+      .status(500)
+      .json({ error: err.response?.data?.message || "Directions failed" });
   }
 });
 

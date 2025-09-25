@@ -1,3 +1,4 @@
+// Map.tsx
 import React, { useMemo, useState } from "react";
 import {
   MapContainer,
@@ -10,7 +11,17 @@ import {
 } from "react-leaflet";
 import type { LatLngTuple, PathOptions } from "leaflet";
 import "leaflet/dist/leaflet.css";
+import PoiControls from "./PoiControls";
 import type { Route } from "../types/ors";
+
+interface OverpassElement {
+  id: number;
+  type: string;
+  lat?: number;
+  lon?: number;
+  center?: { lat: number; lon: number };
+  tags?: Record<string, string>;
+}
 
 interface MapProps {
   route?: Route;
@@ -18,7 +29,6 @@ interface MapProps {
   pathOptions?: PathOptions;
 }
 
-// Auto-fit map bounds
 const MapUpdater: React.FC<{ positions: LatLngTuple[] }> = ({ positions }) => {
   const map = useMap();
   React.useEffect(() => {
@@ -31,7 +41,6 @@ const MapUpdater: React.FC<{ positions: LatLngTuple[] }> = ({ positions }) => {
   return null;
 };
 
-// Tile providers
 const tileProviders = {
   OSM: {
     url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -42,18 +51,6 @@ const tileProviders = {
     url: "https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{z}/{x}/{y}{r}.png",
     attribution: "&copy; OpenStreetMap &copy; Carto",
   },
-  CartoDark: {
-    url: "https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}{r}.png",
-    attribution: "&copy; OpenStreetMap &copy; Carto",
-  },
-  TonerLite: {
-    url: "https://stamen-tiles.a.ssl.fastly.net/toner-lite/{z}/{x}/{y}.png",
-    attribution: "Map tiles by Stamen Design, &copy; OpenStreetMap",
-  },
-  Watercolor: {
-    url: "https://stamen-tiles.a.ssl.fastly.net/watercolor/{z}/{x}/{y}.jpg",
-    attribution: "Map tiles by Stamen Design, &copy; OpenStreetMap",
-  },
 };
 
 const Map: React.FC<MapProps> = ({
@@ -62,6 +59,8 @@ const Map: React.FC<MapProps> = ({
   pathOptions = { color: "#3b82f6", weight: 5 },
 }) => {
   const [provider, setProvider] = useState<keyof typeof tileProviders>("OSM");
+  const [pois, setPois] = useState<OverpassElement[]>([]);
+  const DEFAULT_CENTER: LatLngTuple = [9.03, 38.75];
 
   // Convert route coordinates [lng, lat] -> [lat, lng]
   const positions: LatLngTuple[] = useMemo(
@@ -93,17 +92,30 @@ const Map: React.FC<MapProps> = ({
     );
   }, [route, positions, showSteps]);
 
-  const DEFAULT_CENTER: LatLngTuple = [9.03, 38.75];
+  // Combine route positions + POI positions for fitBounds
+  const allPositions: LatLngTuple[] = useMemo(
+    () => [
+      ...positions,
+      ...pois
+        .map((p) => {
+          const lat = p.lat ?? p.center?.lat;
+          const lon = p.lon ?? p.center?.lon;
+          if (typeof lat !== "number" || typeof lon !== "number") return null;
+          return [lat, lon] as LatLngTuple;
+        })
+        .filter((p): p is LatLngTuple => p !== null),
+    ],
+    [positions, pois]
+  );
 
   return (
-    <div>
-      {/* Dropdown for tile selection */}
+    <div className="relative">
       <select
         value={provider}
         onChange={(e) =>
           setProvider(e.target.value as keyof typeof tileProviders)
         }
-        className="mb-4 p-2 border rounded"
+        className="mb-4 p-2 border rounded z-[1000]"
       >
         {Object.keys(tileProviders).map((key) => (
           <option key={key} value={key}>
@@ -128,8 +140,9 @@ const Map: React.FC<MapProps> = ({
             <Polyline positions={positions} pathOptions={pathOptions} />
           )}
 
-          <MapUpdater positions={positions} />
+          <MapUpdater positions={allPositions} />
 
+          {/* Route markers */}
           {positions.length > 0 && (
             <Marker position={positions[0]}>
               <Popup>Origin</Popup>
@@ -141,21 +154,53 @@ const Map: React.FC<MapProps> = ({
             </Marker>
           )}
 
+          {/* Step markers */}
           {showSteps &&
             stepMarkers.map((step, idx) => (
               <CircleMarker
                 key={idx}
                 center={step.position}
                 radius={4}
-                pathOptions={{ color: "red", fillColor: "red" }}
+                pathOptions={{ color: "red", fillColor: "red", fillOpacity: 1 }}
               >
                 <Popup>
                   Step {idx + 1}: {step.instruction}
                 </Popup>
               </CircleMarker>
             ))}
+
+          {/* POI markers */}
+          {pois.map((p) => {
+            const lat = p.lat ?? p.center?.lat;
+            const lon = p.lon ?? p.center?.lon;
+            if (typeof lat !== "number" || typeof lon !== "number") return null;
+            const name =
+              p.tags?.name || Object.values(p.tags || {})[0] || "POI";
+            return (
+              <Marker key={`${p.type}-${p.id}`} position={[lat, lon]}>
+                <Popup>
+                  <div className="space-y-1">
+                    <div className="font-semibold">{name}</div>
+                    {p.tags && (
+                      <div className="text-xs text-gray-600">
+                        {p.tags.amenity || p.tags.shop}
+                        {p.tags.opening_hours
+                          ? ` • ${p.tags.opening_hours}`
+                          : ""}
+                      </div>
+                    )}
+                  </div>
+                </Popup>
+              </Marker>
+            );
+          })}
         </MapContainer>
       </div>
+
+      <PoiControls
+        center={positions[0] || DEFAULT_CENTER}
+        onPoisChange={setPois}
+      />
     </div>
   );
 };

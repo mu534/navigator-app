@@ -9,12 +9,14 @@ interface ModeSelectorProps {
 
 const ModeSelector: React.FC<ModeSelectorProps> = ({ mode, setMode }) => {
   return (
-    <div className="flex gap-2">
-      {([
-        { key: "car", label: "Drive" },
-        { key: "foot", label: "Walk" },
-        { key: "bike", label: "Bike" },
-      ] as const).map((m) => (
+    <div className="flex gap-2 mb-3">
+      {(
+        [
+          { key: "car", label: "Drive" },
+          { key: "foot", label: "Walk" },
+          { key: "bike", label: "Bike" },
+        ] as const
+      ).map((m) => (
         <button
           key={m.key}
           onClick={() => setMode(m.key)}
@@ -32,5 +34,3 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({ mode, setMode }) => {
 };
 
 export default ModeSelector;
-
-
