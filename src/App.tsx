@@ -8,6 +8,7 @@ import {
   Marker,
   Popup,
   CircleMarker,
+  useMap,
 } from "react-leaflet";
 import RouteDrawer from "./components/RouteDrawer";
 import MapUpdater from "./components/MapUpdater";
@@ -15,22 +16,48 @@ import PoiControls from "./components/PoiControls";
 import ModeSelector from "./components/ModeSelector";
 import SearchBar from "./components/SearchBar";
 import "leaflet/dist/leaflet.css";
+import { motion } from "framer-motion";
 
 import type { Route, Step, Segment } from "./types/ors";
+
+// --- Locate Button ---
+const LocateButton: React.FC<{
+  setOrigin: (pos: [number, number]) => void;
+}> = ({ setOrigin }) => {
+  const map = useMap();
+  const handleLocate = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        const coords: [number, number] = [
+          pos.coords.latitude,
+          pos.coords.longitude,
+        ];
+        setOrigin(coords);
+        map.setView(coords, 15);
+      });
+    }
+  };
+  return (
+    <button
+      className="absolute bottom-20 right-4 bg-white p-2 rounded-full shadow-lg border hover:bg-gray-100 z-[999]"
+      onClick={handleLocate}
+    >
+      📍
+    </button>
+  );
+};
 
 interface GraphHopperInstruction {
   text: string;
   distance?: number;
   time?: number;
 }
-
 interface GraphHopperPath {
   points: string;
   instructions: GraphHopperInstruction[];
   distance: number;
   time: number;
 }
-
 interface GraphHopperResponse {
   paths: GraphHopperPath[];
 }
@@ -50,30 +77,28 @@ const App: React.FC = () => {
     lng: number;
     name?: string;
   } | null>(null);
+  const [showDirections, setShowDirections] = useState(true);
 
-  // Get current location and watch live position
+  // Get current location + watch
   useEffect(() => {
     if (!navigator.geolocation) {
       setOrigin(defaultOrigin);
       return;
     }
-
     navigator.geolocation.getCurrentPosition(
       (pos) => setOrigin([pos.coords.latitude, pos.coords.longitude]),
       () => setOrigin(defaultOrigin),
       { enableHighAccuracy: true }
     );
-
     const watchId = navigator.geolocation.watchPosition(
       (pos) => setLivePos([pos.coords.latitude, pos.coords.longitude]),
       () => {},
       { enableHighAccuracy: true }
     );
-
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
-  // Load dark mode and last route
+  // Dark mode + last route
   useEffect(() => {
     setIsDark(localStorage.getItem("ui.dark") === "1");
     const savedRoute = localStorage.getItem("route.last");
@@ -85,13 +110,12 @@ const App: React.FC = () => {
       }
     }
   }, []);
-
   useEffect(() => {
     document.documentElement.classList.toggle("dark", isDark);
     localStorage.setItem("ui.dark", isDark ? "1" : "0");
   }, [isDark]);
 
-  // Navigate to a point (POI or destination)
+  // Navigate to destination
   const navigateTo = async (lat: number, lng: number, name?: string) => {
     try {
       const start = origin || defaultOrigin;
@@ -112,7 +136,6 @@ const App: React.FC = () => {
       const decoded: [number, number][] = decodedRaw.filter(
         (item): item is [number, number] => item.length === 2
       );
-
       const geometryCoordinates: [number, number][] = decoded.map(
         ([lat, lng]) => [lng, lat]
       );
@@ -175,11 +198,42 @@ const App: React.FC = () => {
           Reset View
         </button>
 
-        {route && <RouteDrawer route={route} />}
+        {/* ETA + Distance */}
+        {route && (
+          <div className="p-3 bg-gray-100 rounded mb-2">
+            <p>
+              <strong>Distance:</strong> {(route.distance / 1000).toFixed(1)} km
+            </p>
+            <p>
+              <strong>ETA:</strong> {Math.round(route.duration / 60000)} min
+            </p>
+          </div>
+        )}
+
+        {/* Collapsible Directions */}
+        {route && (
+          <>
+            <button
+              className="px-3 py-1.5 border rounded mb-2"
+              onClick={() => setShowDirections((s) => !s)}
+            >
+              {showDirections ? "Hide Directions" : "Show Directions"}
+            </button>
+            {showDirections && (
+              <motion.div
+                initial={{ height: 0 }}
+                animate={{ height: "auto" }}
+                className="overflow-hidden"
+              >
+                <RouteDrawer route={route} />
+              </motion.div>
+            )}
+          </>
+        )}
       </div>
 
       {/* Map */}
-      <div className="md:w-2/3 flex-1 min-h-[500px]">
+      <div className="md:w-2/3 flex-1 min-h-[500px] relative">
         <MapContainer
           center={origin || defaultOrigin}
           zoom={13}
@@ -229,7 +283,7 @@ const App: React.FC = () => {
             </>
           )}
 
-          {/* Planned steps */}
+          {/* Planned waypoints */}
           {plannedCoords.map(([lat, lng], idx) => (
             <CircleMarker
               key={idx}
@@ -239,7 +293,7 @@ const App: React.FC = () => {
             />
           ))}
 
-          {/* Highlight selected POI */}
+          {/* Highlighted POI */}
           {highlightPoi && (
             <Marker position={[highlightPoi.lat, highlightPoi.lng]}>
               <Popup>{highlightPoi.name || "Destination"}</Popup>
@@ -264,6 +318,9 @@ const App: React.FC = () => {
             }
             onPickDestination={navigateTo}
           />
+
+          {/* 📍 Locate Button */}
+          <LocateButton setOrigin={setOrigin} />
         </MapContainer>
       </div>
     </div>
