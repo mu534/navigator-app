@@ -1,4 +1,5 @@
 export interface Step {
+  way_points: number[];
   instruction: string;
   distance?: number;
   duration?: number;
