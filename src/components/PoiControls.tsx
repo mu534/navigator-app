@@ -1,6 +1,6 @@
 import React from "react";
 import axios from "axios";
-import { Marker, Popup, useMap } from "react-leaflet";
+import { Marker, Popup } from "react-leaflet";
 import type { LatLngTuple } from "leaflet";
 
 type PoiType = "restaurant" | "cafe" | "atm" | "fuel" | "hotel" | "hospital";
@@ -19,13 +19,24 @@ interface OverpassElement {
   tags?: Record<string, string>;
 }
 
-const DEFAULT_TYPES: PoiType[] = ["restaurant", "cafe", "atm", "fuel", "hotel", "hospital"];
+const DEFAULT_TYPES: PoiType[] = [
+  "restaurant",
+  "cafe",
+  "atm",
+  "fuel",
+  "hotel",
+  "hospital",
+];
 
-const PoiControls: React.FC<PoiControlsProps> = ({ center, onPickDestination }) => {
-  const [activeTypes, setActiveTypes] = React.useState<Set<PoiType>>(new Set(["restaurant", "cafe"]));
+const PoiControls: React.FC<PoiControlsProps> = ({
+  center,
+  onPickDestination,
+}) => {
+  const [activeTypes, setActiveTypes] = React.useState<Set<PoiType>>(
+    new Set(["restaurant", "cafe"])
+  );
   const [pois, setPois] = React.useState<OverpassElement[]>([]);
   const [loading, setLoading] = React.useState(false);
-  const map = useMap();
 
   const toggleType = (t: PoiType) => {
     setActiveTypes((prev) => {
@@ -118,5 +129,3 @@ const PoiControls: React.FC<PoiControlsProps> = ({ center, onPickDestination }) 
 };
 
 export default PoiControls;
-
-

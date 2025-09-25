@@ -45,6 +45,11 @@ const App: React.FC = () => {
   const [isDark, setIsDark] = useState(false);
   const [fitKey, setFitKey] = useState(0);
   const [livePos, setLivePos] = useState<[number, number] | null>(null);
+  const [highlightPoi, setHighlightPoi] = useState<{
+    lat: number;
+    lng: number;
+    name?: string;
+  } | null>(null);
 
   // Get current location and watch live position
   useEffect(() => {
@@ -68,7 +73,7 @@ const App: React.FC = () => {
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
-  // Load dark mode and last route from localStorage
+  // Load dark mode and last route
   useEffect(() => {
     setIsDark(localStorage.getItem("ui.dark") === "1");
     const savedRoute = localStorage.getItem("route.last");
@@ -87,9 +92,11 @@ const App: React.FC = () => {
   }, [isDark]);
 
   // Navigate to a point (POI or destination)
-  const navigateTo = async (lat: number, lng: number) => {
+  const navigateTo = async (lat: number, lng: number, name?: string) => {
     try {
       const start = origin || defaultOrigin;
+      setHighlightPoi({ lat, lng, name });
+
       const { data } = await axios.post<GraphHopperResponse>(
         "/api/directions",
         {
@@ -101,7 +108,6 @@ const App: React.FC = () => {
       const path = data.paths[0];
       if (!path) return;
 
-      // --- Safe decode of polyline ---
       const decodedRaw: number[][] = polyline.decode(path.points);
       const decoded: [number, number][] = decodedRaw.filter(
         (item): item is [number, number] => item.length === 2
@@ -115,15 +121,11 @@ const App: React.FC = () => {
         instruction: i.text,
         distance: i.distance,
         duration: i.time,
-        way_points: [], // fill if API provides indexes
+        way_points: [],
       }));
 
       const segments: Segment[] = [
-        {
-          steps,
-          distance: path.distance,
-          duration: path.time,
-        },
+        { steps, distance: path.distance, duration: path.time },
       ];
 
       const built: Route = {
@@ -135,6 +137,7 @@ const App: React.FC = () => {
 
       setRoute(built);
       localStorage.setItem("route.last", JSON.stringify(built));
+      setFitKey((k) => k + 1);
     } catch (err) {
       console.error("Navigation failed", err);
     }
@@ -155,6 +158,7 @@ const App: React.FC = () => {
             Dark
           </label>
         </div>
+
         <ModeSelector mode={mode} setMode={setMode} />
         <SearchBar
           setRoute={setRoute}
@@ -163,12 +167,14 @@ const App: React.FC = () => {
           rerouteOnOriginChange
           onPlannedCoordinates={setPlannedCoords}
         />
+
         <button
           className="px-3 py-1.5 border rounded"
-          onClick={() => origin && setFitKey((k) => k + 1)}
+          onClick={() => setFitKey((k) => k + 1)}
         >
           Reset View
         </button>
+
         {route && <RouteDrawer route={route} />}
       </div>
 
@@ -233,7 +239,14 @@ const App: React.FC = () => {
             />
           ))}
 
-          {/* Live position marker */}
+          {/* Highlight selected POI */}
+          {highlightPoi && (
+            <Marker position={[highlightPoi.lat, highlightPoi.lng]}>
+              <Popup>{highlightPoi.name || "Destination"}</Popup>
+            </Marker>
+          )}
+
+          {/* Live position */}
           {livePos && (
             <Marker position={livePos}>
               <Popup>Your Current Location</Popup>
@@ -249,7 +262,7 @@ const App: React.FC = () => {
                   ]
                 : defaultOrigin
             }
-            onPickDestination={(lat, lng) => navigateTo(lat, lng)}
+            onPickDestination={navigateTo}
           />
         </MapContainer>
       </div>
