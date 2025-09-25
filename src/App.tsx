@@ -20,7 +20,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Sun, Moon, ZoomIn, ZoomOut } from "lucide-react";
 import type { Route } from "./types/ors";
 
-// --- Locate Button ---
+// --- Types ---
 interface LocateButtonProps {
   setOrigin: (coords: [number, number]) => void;
 }
@@ -29,7 +29,26 @@ interface Instruction {
   distance?: number;
   time?: number;
 }
+export interface OverpassElement {
+  id: number;
+  type: string;
+  lat?: number;
+  lon?: number;
+  center?: { lat: number; lon: number };
+  tags?: Record<string, string>;
+}
 
+// --- POI Colors ---
+const TYPE_COLORS: Record<string, string> = {
+  restaurant: "#168E6A",
+  cafe: "#FBBO3B",
+  atm: "#B4B6B7",
+  fuel: "#292D32",
+  hotel: "#168E6A",
+  hospital: "#FBBO3B",
+};
+
+// --- Locate Button ---
 const LocateButton: React.FC<LocateButtonProps> = ({ setOrigin }) => {
   const map = useMap();
   const handleLocate = () => {
@@ -90,6 +109,7 @@ const ZoomControls: React.FC = () => {
   );
 };
 
+// --- App Component ---
 const App: React.FC = () => {
   const defaultOrigin: [number, number] = [9.03, 38.7578];
 
@@ -107,6 +127,7 @@ const App: React.FC = () => {
   } | null>(null);
   const [showDirections, setShowDirections] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [pois, setPois] = useState<OverpassElement[]>([]);
 
   // Initialize geolocation and watch position
   useEffect(() => {
@@ -389,17 +410,47 @@ const App: React.FC = () => {
             </Marker>
           )}
 
+          {/* POIs */}
           <PoiControls
             center={
               route
                 ? [
-                    route.geometry.coordinates[0][0],
                     route.geometry.coordinates[0][1],
+                    route.geometry.coordinates[0][0],
                   ]
                 : defaultOrigin
             }
             onPickDestination={navigateTo}
+            onPoisChange={setPois}
           />
+          {pois.map((el) => {
+            const lat = el.lat ?? el.center?.lat;
+            const lon = el.lon ?? el.center?.lon;
+            if (lat === undefined || lon === undefined) return null;
+            const name = el.tags?.name || el.type;
+            const color = TYPE_COLORS[el.type] ?? "#2563eb";
+
+            return (
+              <CircleMarker
+                key={`${el.type}-${el.id}`}
+                center={[lat, lon]}
+                radius={6}
+                pathOptions={{ color, fillOpacity: 0.9 }}
+              >
+                <Popup>
+                  <div className="flex flex-col">
+                    <span>{name}</span>
+                    <button
+                      className="mt-1 px-2 py-1 bg-blue-600 text-white rounded"
+                      onClick={() => navigateTo(lat, lon, name)}
+                    >
+                      Navigate here
+                    </button>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            );
+          })}
 
           <LocateButton setOrigin={setOrigin} />
           <ZoomControls />
